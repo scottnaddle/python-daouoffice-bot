@@ -137,9 +137,16 @@ def _authed_client(args: argparse.Namespace) -> BotClient:
         _store(c, base_url, cfg)
 
     if prof and prof.access_token:
-        client = BotClient.from_token(
-            base_url,
-            prof.access_token,
+        # Keep the saved credentials on the client: from_token() drops them,
+        # so a mid-run 401 could not re-login and _store() then persisted
+        # password="" — silently erasing the saved password from the profile.
+        client = BotClient(
+            prof.login_id or "",
+            _pick(args.password, "DAOU_PASSWORD", prof.password,
+                  app=_app(args).get("password")) or "",  # no TTY prompt here
+            base_url=base_url,
+            company_id=company_id,
+            access_token=prof.access_token,
             refresh_token=prof.refresh_token,
             on_auth=_persist,
         )

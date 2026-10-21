@@ -81,6 +81,16 @@ def _default_headers(base_url: str, user_agent: str) -> dict[str, str]:
     }
 
 
+def _safe_json(resp: httpx.Response) -> dict:
+    """Parse a JSON object body; HTML error pages / 502s yield {} instead of
+    raising JSONDecodeError past the DaouAuthError handling."""
+    try:
+        body = resp.json() if resp.content else {}
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 # ============================================================
 # Models
 # ============================================================
@@ -395,7 +405,7 @@ class BotClient:
             },
         )
 
-        body = resp.json() if resp.content else {}
+        body = _safe_json(resp)
         logger.debug("Login response: status=%d body=%s", resp.status_code, body)
 
         code = body.get("code", "")
@@ -404,7 +414,9 @@ class BotClient:
 
         # PORTAL-0901: 3-month password change required.
         # Try to delay the change via the change-delay API and retry login.
-        if resp.status_code != HTTP_OK or code == "PORTAL-0901":
+        # Only PORTAL-0901 is retryable. Retrying on any non-200 (bad
+        # password, 403, 5xx) doubled failed attempts -> account lockout risk.
+        if code == "PORTAL-0901":
             if not self._password:
                 raise DaouAuthError(
                     "Login failed: PORTAL-0901 (password change required), "
@@ -422,7 +434,7 @@ class BotClient:
                     "captcha": "",
                 },
             )
-            body = resp.json() if resp.content else {}
+            body = _safe_json(resp)
             logger.debug("Login retry response: status=%d body=%s", resp.status_code, body)
 
             code = body.get("code", "")
@@ -472,7 +484,8 @@ class BotClient:
         field (e.g. 3) indicates how many months the delay is valid for.
         After a successful delay the caller is expected to retry login.
         """
-        is_delayable = (login_body.get("data") or {}).get("isPasswordChangeDelayable")
+        data = login_body.get("data")
+        is_delayable = isinstance(data, dict) and data.get("isPasswordChangeDelayable")
         if not is_delayable:
             return
         logger.info("PORTAL-0901 detected — delaying password change requirement")

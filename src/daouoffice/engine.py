@@ -245,7 +245,8 @@ class BotEngine:
             return
 
         ids = [m for m in (self._mid(it) for it in history) if m is not None]
-        latest = history[-1].chatMessageId
+        # Don't assume the range is oldest-first: ack the highest id.
+        latest = max(ids) if ids else history[-1].chatMessageId
 
         baseline = self._cursors.get(room_id)
         if baseline is None:
